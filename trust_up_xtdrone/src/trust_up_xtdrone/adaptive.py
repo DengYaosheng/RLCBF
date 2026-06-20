@@ -1,4 +1,10 @@
-"""Adaptive robustness estimation for TRUST-UP target pursuit."""
+"""Adaptive robustness estimation for TRUST-UP target pursuit.
+
+The local names in this module intentionally follow compact paper notation:
+``z``/``dz`` for relative position and velocity, ``eps`` for the sampled
+residual, ``nu``/``eta`` for bounded uncertainty surrogates, and ``rho`` for
+constraint pressure.  The comments map these names to the TRUST-UP equations.
+"""
 
 from dataclasses import dataclass, field
 from typing import Mapping, Optional, Sequence
@@ -78,45 +84,54 @@ class AdaptiveRobustnessEstimator:
             self.estimate = AdaptiveEstimate()
             return self.estimate
 
-        dt = max(float(dt), 1.0e-3)
-        velocity = np.asarray(pursuer.velocity, dtype=float).reshape(3)
-        commanded = np.asarray(previous_commanded_accel, dtype=float).reshape(3)
+        tau = max(float(dt), 1.0e-3)
+        v = np.asarray(pursuer.velocity, dtype=float).reshape(3)
+        u0 = np.asarray(previous_commanded_accel, dtype=float).reshape(3)
         if self._previous_velocity is None:
-            residual = np.zeros(3)
+            eps = np.zeros(3)
         else:
-            observed_accel = (velocity - self._previous_velocity) / dt
-            residual = observed_accel - commanded
-        self._previous_velocity = velocity.copy()
+            # TRUST-UP Eq. (19): dot(u_i) = v_i + Z_i xi.  The simulator does not
+            # identify theta/xi explicitly, so eps is the sampled model mismatch:
+            # eps ~= dot(u_i)_meas - v_i, a discrete proxy for Z_i tilde(xi).
+            du = (v - self._previous_velocity) / tau
+            eps = du - u0
+        self._previous_velocity = v.copy()
 
-        gain = float(np.clip(self.params.residual_filter_gain, 0.0, 1.0))
-        self._filtered_residual = (1.0 - gain) * self._filtered_residual + gain * residual
+        a = float(np.clip(self.params.residual_filter_gain, 0.0, 1.0))
+        self._filtered_residual = (1.0 - a) * self._filtered_residual + a * eps
 
-        pressure = self._clearance_pressure(pursuer, target, obstacles, safety)
-        energy = self._tracking_energy(pursuer, target, safety)
-        feature_scale = 1.0 + 0.35 * pressure + 0.15 * np.tanh(energy)
-        next_disturbance = (
-            (1.0 - float(self.params.leakage) * dt) * self.estimate.disturbance
-            + float(self.params.adaptation_gain) * dt * feature_scale * self._filtered_residual
+        # rho corresponds to how close C_{u,i}, C_{c,i}, and C_{s,i} are to their
+        # boundaries.  e is the pursuit tracking energy around the desired shell.
+        rho = self._clearance_pressure(pursuer, target, obstacles, safety)
+        e = self._tracking_energy(pursuer, target, safety)
+        chi = 1.0 + 0.35 * rho + 0.15 * np.tanh(e)
+
+        # TRUST-UP Lemma 1 bounds ||tilde(theta)|| <= nu_bar and
+        # ||tilde(xi)|| <= eta_bar.  d_hat is an implementation-level lumped
+        # disturbance surrogate for Y_i tilde(theta) + Z_i tilde(xi).
+        d_hat = (
+            (1.0 - float(self.params.leakage) * tau) * self.estimate.disturbance
+            + float(self.params.adaptation_gain) * tau * chi * self._filtered_residual
         )
-        disturbance = clamp_norm(next_disturbance, float(self.params.disturbance_limit))
+        d = clamp_norm(d_hat, float(self.params.disturbance_limit))
 
-        residual_norm = float(np.linalg.norm(self._filtered_residual))
-        disturbance_norm = float(np.linalg.norm(disturbance))
-        margin = (
-            float(self.params.residual_margin_gain) * disturbance_norm
-            + float(self.params.pressure_margin_gain) * pressure
-            + float(self.params.energy_margin_gain) * np.sqrt(max(energy, 0.0))
+        nu = float(np.linalg.norm(self._filtered_residual))
+        eta = float(np.linalg.norm(d))
+        delta = (
+            float(self.params.residual_margin_gain) * eta
+            + float(self.params.pressure_margin_gain) * rho
+            + float(self.params.energy_margin_gain) * np.sqrt(max(e, 0.0))
         )
-        margin = float(np.clip(margin, 0.0, float(self.params.max_margin)))
+        delta = float(np.clip(delta, 0.0, float(self.params.max_margin)))
 
         self.estimate = AdaptiveEstimate(
-            disturbance=disturbance,
+            disturbance=d,
             residual=self._filtered_residual.copy(),
-            disturbance_norm=disturbance_norm,
-            residual_norm=residual_norm,
-            margin_scale=margin,
-            tracking_energy=float(energy),
-            clearance_pressure=float(pressure),
+            disturbance_norm=eta,
+            residual_norm=nu,
+            margin_scale=delta,
+            tracking_energy=float(e),
+            clearance_pressure=float(rho),
         )
         return self.estimate
 
@@ -126,43 +141,58 @@ class AdaptiveRobustnessEstimator:
         return np.asarray(nominal_accel, dtype=float).reshape(3) - self.estimate.disturbance
 
     def _tracking_energy(self, pursuer, target, safety) -> float:
-        relative_position = np.asarray(pursuer.position, dtype=float).reshape(3) - np.asarray(target.position, dtype=float).reshape(3)
-        relative_velocity = np.asarray(pursuer.velocity, dtype=float).reshape(3) - np.asarray(target.velocity, dtype=float).reshape(3)
-        distance = float(np.linalg.norm(relative_position))
-        desired = float(safety.desired_bound(pursuer, target))
-        range_error = distance - desired
-        return 0.5 * range_error * range_error + 0.125 * float(np.dot(relative_velocity, relative_velocity))
+        # zeta_i = x_i - q_i appears in TRUST-UP Eqs. (18), (26), (27), (33), (34).
+        z = np.asarray(pursuer.position, dtype=float).reshape(3) - np.asarray(target.position, dtype=float).reshape(3)
+        dz = np.asarray(pursuer.velocity, dtype=float).reshape(3) - np.asarray(target.velocity, dtype=float).reshape(3)
+        rr = float(np.linalg.norm(z))
+        ell = float(safety.desired_bound(pursuer, target))
+        return 0.5 * (rr - ell) ** 2 + 0.125 * float(np.dot(dz, dz))
 
     def _clearance_pressure(self, pursuer, target, obstacles: Sequence[object], safety) -> float:
-        activation = max(float(self.params.pressure_activation_margin), 1.0e-3)
-        pressure = self._shell_pressure(
+        eps = max(float(self.params.pressure_activation_margin), 1.0e-3)
+        psi = self._shell_pressure(
             pursuer,
             target,
             float(safety.enforced_collision_bound(pursuer, target)),
             float(safety.enforced_sensing_bound(pursuer, target)),
-            activation,
+            eps,
         )
         for obstacle in obstacles:
-            lower = float(safety.enforced_collision_bound(pursuer, obstacle, obstacle=True))
-            pressure += self._lower_bound_pressure(pursuer, obstacle, lower, activation)
-        return float(pressure)
+            r = float(safety.enforced_collision_bound(pursuer, obstacle, obstacle=True))
+            psi += self._lower_bound_pressure(pursuer, obstacle, r, eps)
+        return float(psi)
 
     @staticmethod
     def _center_distance(first, second) -> float:
-        first_position = np.asarray(first.position, dtype=float).reshape(3)
-        second_position = np.asarray(second.position, dtype=float).reshape(3)
-        return float(np.linalg.norm(first_position - second_position))
+        x = np.asarray(first.position, dtype=float).reshape(3)
+        p = np.asarray(second.position, dtype=float).reshape(3)
+        return float(np.linalg.norm(x - p))
 
-    def _lower_bound_pressure(self, first, second, lower_bound: float, activation: float) -> float:
-        clearance = self._center_distance(first, second) - lower_bound
-        if clearance >= activation:
-            return 0.0
-        return float(((activation - clearance) / activation) ** 2)
+    @staticmethod
+    def _hc_from_rr(rr: float, r: float) -> float:
+        return float(rr * rr - r * r)
 
-    def _shell_pressure(self, first, second, lower_bound: float, upper_bound: float, activation: float) -> float:
-        distance = self._center_distance(first, second)
-        lower_gap = distance - lower_bound
-        upper_gap = upper_bound - distance
-        inner = max((activation - lower_gap) / activation, 0.0)
-        outer = max((activation - upper_gap) / activation, 0.0)
-        return float(inner * inner + outer * outer + EPS * 0.0)
+    @staticmethod
+    def _hs_from_rr(rr: float, r_big: float) -> float:
+        return float(r_big * r_big - rr * rr)
+
+    def _lower_bound_pressure(self, first, second, r: float, eps: float) -> float:
+        # Eq. (17) pressure uses the same squared barrier h_{c,i,k}, not a
+        # separate linear distance heuristic.
+        rr = self._center_distance(first, second)
+        hc = self._hc_from_rr(rr, r)
+        hc_eps = self._hc_from_rr(r + eps, r)
+        pc = max((hc_eps - hc) / max(hc_eps, EPS), 0.0)
+        return float(pc * pc)
+
+    def _shell_pressure(self, first, second, r: float, r_big: float, eps: float) -> float:
+        # Eq. (17) inner barrier and Eq. (18) outer sensing barrier are both
+        # evaluated in their native squared-distance units.
+        rr = self._center_distance(first, second)
+        hc = self._hc_from_rr(rr, r)
+        hs = self._hs_from_rr(rr, r_big)
+        hc_eps = self._hc_from_rr(r + eps, r)
+        hs_eps = self._hs_from_rr(max(r_big - eps, 0.0), r_big)
+        pc = max((hc_eps - hc) / max(hc_eps, EPS), 0.0)
+        ps = max((hs_eps - hs) / max(hs_eps, EPS), 0.0)
+        return float(pc * pc + ps * ps + EPS * 0.0)

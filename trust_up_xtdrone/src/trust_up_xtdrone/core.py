@@ -187,84 +187,110 @@ class TrustUpController:
         kappa_dot = -(2.0 * (s - ell2) * s_dot) / max(denom * denom, EPS)
         return float(kappa), float(kappa_dot)
 
+    @staticmethod
+    def _h_cik(xi: AgentState, pk: AgentState, ri: float) -> Tuple[np.ndarray, np.ndarray, float, float]:
+        kk = xi.position - pk.position
+        dkk = xi.velocity - pk.velocity
+        hc = float(np.dot(kk, kk) - ri * ri)
+        dhc = 2.0 * float(np.dot(kk, dkk))
+        return kk, dkk, hc, dhc
+
+    @staticmethod
+    def _h_si(xi: AgentState, qi: AgentState, ri: float) -> Tuple[np.ndarray, np.ndarray, float, float]:
+        zz = xi.position - qi.position
+        dzz = xi.velocity - qi.velocity
+        hs = float(ri * ri - np.dot(zz, zz))
+        dhs = -2.0 * float(np.dot(zz, dzz))
+        return zz, dzz, hs, dhs
+
+    def _h_ui(self, xi: AgentState, qi: AgentState) -> Tuple[np.ndarray, float, float, float]:
+        zz = xi.position - qi.position
+        dzz = self.command_velocity - qi.velocity
+        kap0, dkap0 = self._kappa(zz, dzz)
+        if kap0 <= self.limits.max_speed:
+            kap, dkap = kap0, dkap0
+        else:
+            kap, dkap = float(self.limits.max_speed), 0.0
+        hu = float(kap * kap - np.dot(self.command_velocity, self.command_velocity))
+        return zz, kap, dkap, hu
+
     def _append_collision_constraint(
         self,
-        rows: List[np.ndarray],
-        bounds: List[float],
-        pursuer: AgentState,
-        obstacle: AgentState,
+        amat: List[np.ndarray],
+        bvec: List[float],
+        xi: AgentState,
+        pk: AgentState,
         robustness_margin: Optional[float] = None,
     ) -> Dict[str, float]:
-        is_target = obstacle.name.startswith("target") or obstacle.name.startswith("trust_target")
-        radius = self.safety.enforced_collision_bound(pursuer, obstacle, obstacle=not is_target)
-        paper_radius = self.safety.collision_bound(pursuer, obstacle)
-        r = pursuer.position - obstacle.position
-        r_dot = pursuer.velocity - obstacle.velocity
-        h = float(np.dot(r, r) - radius * radius)
-        h_dot = 2.0 * float(np.dot(r, r_dot))
-        a = 2.0 * r
-        b = (
-            2.0 * float(np.dot(r, obstacle.acceleration))
-            - 2.0 * float(np.dot(r_dot, r_dot))
-            - self.safety.hocbf_k1 * h_dot
-            - self.safety.hocbf_k0 * h
+        # TRUST-UP Eq. (17): h_{c,i,k}=||x_i-p_k||^2-r_i^2.
+        # Eq. (31)-(32) write the admissible collision set as K_{c,i,k}; here
+        # A v >= b is the discrete HOCBF row for the same forward-invariance test.
+        is_q = pk.name.startswith("target") or pk.name.startswith("trust_target")
+        ri = self.safety.enforced_collision_bound(xi, pk, obstacle=not is_q)
+        ri0 = self.safety.collision_bound(xi, pk)
+        kk, dkk, hc, dhc = self._h_cik(xi, pk, ri)
+        ac = 2.0 * kk
+        bc = (
+            2.0 * float(np.dot(kk, pk.acceleration))
+            - 2.0 * float(np.dot(dkk, dkk))
+            - self.safety.hocbf_k1 * dhc
+            - self.safety.hocbf_k0 * hc
             + float(self.safety.robustness_margin if robustness_margin is None else robustness_margin)
         )
-        if float(np.linalg.norm(a)) > 1.0e-6:
-            rows.append(a)
-            bounds.append(float(b))
-        return {"h": h, "h_dot": h_dot, "distance": float(np.linalg.norm(r)), "radius": radius, "paper_radius": paper_radius}
+        if float(np.linalg.norm(ac)) > 1.0e-6:
+            amat.append(ac)
+            bvec.append(float(bc))
+        return {"h": hc, "h_dot": dhc, "distance": float(np.linalg.norm(kk)), "radius": ri, "paper_radius": ri0}
 
     def _append_sensing_constraint(
         self,
-        rows: List[np.ndarray],
-        bounds: List[float],
-        pursuer: AgentState,
-        target: AgentState,
+        amat: List[np.ndarray],
+        bvec: List[float],
+        xi: AgentState,
+        qi: AgentState,
         robustness_margin: Optional[float] = None,
     ) -> Dict[str, float]:
-        radius = self.safety.enforced_sensing_bound(pursuer, target)
-        paper_radius = self.safety.sensing_bound(pursuer, target)
-        zeta = pursuer.position - target.position
-        zeta_dot = pursuer.velocity - target.velocity
-        h = float(radius * radius - np.dot(zeta, zeta))
-        h_dot = -2.0 * float(np.dot(zeta, zeta_dot))
-        a = -2.0 * zeta
-        b = (
+        # TRUST-UP Eq. (18): h_{s,i}=R_i^2-||x_i-q_i||^2, with zeta_i=x_i-q_i.
+        # Eq. (33)-(34) denote the sensing admissible set K_{s,i}; this row is
+        # its sampled second-order CBF analogue in the active-set QP.
+        ri = self.safety.enforced_sensing_bound(xi, qi)
+        ri0 = self.safety.sensing_bound(xi, qi)
+        zz, dzz, hs, dhs = self._h_si(xi, qi, ri)
+        ass = -2.0 * zz
+        bs = (
             float(self.safety.robustness_margin if robustness_margin is None else robustness_margin)
-            - 2.0 * float(np.dot(zeta, target.acceleration))
-            + 2.0 * float(np.dot(zeta_dot, zeta_dot))
-            - self.safety.sensing_k1 * h_dot
-            - self.safety.sensing_k0 * h
+            - 2.0 * float(np.dot(zz, qi.acceleration))
+            + 2.0 * float(np.dot(dzz, dzz))
+            - self.safety.sensing_k1 * dhs
+            - self.safety.sensing_k0 * hs
         )
-        if float(np.linalg.norm(a)) > 1.0e-6:
-            rows.append(a)
-            bounds.append(float(b))
-        return {"h": h, "h_dot": h_dot, "distance": float(np.linalg.norm(zeta)), "radius": radius, "paper_radius": paper_radius}
+        if float(np.linalg.norm(ass)) > 1.0e-6:
+            amat.append(ass)
+            bvec.append(float(bs))
+        return {"h": hs, "h_dot": dhs, "distance": float(np.linalg.norm(zz)), "radius": ri, "paper_radius": ri0}
 
     def _append_input_constraint(
         self,
-        rows: List[np.ndarray],
-        bounds: List[float],
-        pursuer: AgentState,
-        target: AgentState,
+        amat: List[np.ndarray],
+        bvec: List[float],
+        xi: AgentState,
+        qi: AgentState,
         robustness_margin: Optional[float] = None,
     ) -> Dict[str, float]:
-        zeta = pursuer.position - target.position
-        zeta_dot = self.command_velocity - target.velocity
-        kappa, kappa_dot = self._kappa(zeta, zeta_dot)
-        speed_bound = min(kappa, self.limits.max_speed)
-        h = float(speed_bound * speed_bound - np.dot(self.command_velocity, self.command_velocity))
-        a = -2.0 * self.command_velocity
-        b = (
+        # TRUST-UP Eq. (13), (26), (27): h_{u,i}=kappa(zeta_i)^2-||u_i||^2.
+        # kappa(zeta_i)=c+1/((zeta_i^T zeta_i-l^2)^2+epsilon) relaxes the
+        # input envelope near critical tracking states while still bounding u_i.
+        _, kap, dkap, hu = self._h_ui(xi, qi)
+        au = -2.0 * self.command_velocity
+        bu = (
             float(self.safety.robustness_margin if robustness_margin is None else robustness_margin)
-            - 2.0 * speed_bound * kappa_dot
-            - self.safety.input_alpha * h
+            - 2.0 * kap * dkap
+            - self.safety.input_alpha * hu
         )
-        if float(np.linalg.norm(a)) > 1.0e-6:
-            rows.append(a)
-            bounds.append(float(b))
-        return {"h": h, "kappa": kappa, "speed_bound": speed_bound}
+        if float(np.linalg.norm(au)) > 1.0e-6:
+            amat.append(au)
+            bvec.append(float(bu))
+        return {"h": hu, "kappa": kap, "speed_bound": kap}
 
     def _velocity_guard(
         self,
@@ -273,31 +299,31 @@ class TrustUpController:
         target: AgentState,
         obstacles: Sequence[AgentState],
     ) -> Tuple[np.ndarray, Dict[str, object]]:
-        rows: List[np.ndarray] = []
-        bounds: List[float] = []
-        gamma = float(self.safety.velocity_barrier_gamma)
-        margin = float(self.safety.velocity_barrier_margin)
+        amat: List[np.ndarray] = []
+        bvec: List[float] = []
+        gam = float(self.safety.velocity_barrier_gamma)
+        eps = float(self.safety.velocity_barrier_margin)
 
-        zeta = pursuer.position - target.position
-        sensing_radius = self.safety.enforced_sensing_bound(pursuer, target)
-        h_s = float(sensing_radius ** 2 - np.dot(zeta, zeta))
-        rows.append(-2.0 * zeta)
-        bounds.append(float(-2.0 * np.dot(zeta, target.velocity) - gamma * h_s + margin))
+        zz = pursuer.position - target.position
+        rs = self.safety.enforced_sensing_bound(pursuer, target)
+        hs = float(rs ** 2 - np.dot(zz, zz))
+        amat.append(-2.0 * zz)
+        bvec.append(float(-2.0 * np.dot(zz, target.velocity) - gam * hs + eps))
 
         collision_distances = []
         for obstacle in obstacles:
             is_target = obstacle.name.startswith("target") or obstacle.name.startswith("trust_target")
-            radius = self.safety.enforced_collision_bound(pursuer, obstacle, obstacle=not is_target)
-            r = pursuer.position - obstacle.position
-            h_c = float(np.dot(r, r) - radius * radius)
-            if float(np.linalg.norm(r)) > 1.0e-6:
-                rows.append(2.0 * r)
-                bounds.append(float(2.0 * np.dot(r, obstacle.velocity) - gamma * h_c + margin))
-            collision_distances.append(float(np.linalg.norm(r)))
+            ri = self.safety.enforced_collision_bound(pursuer, obstacle, obstacle=not is_target)
+            kk = pursuer.position - obstacle.position
+            hc = float(np.dot(kk, kk) - ri * ri)
+            if float(np.linalg.norm(kk)) > 1.0e-6:
+                amat.append(2.0 * kk)
+                bvec.append(float(2.0 * np.dot(kk, obstacle.velocity) - gam * hc + eps))
+            collision_distances.append(float(np.linalg.norm(kk)))
 
         constraints = [
             LinearSafetyConstraint.make("velocity_guard_%02d" % idx, row, bound, kind="velocity_guard")
-            for idx, (row, bound) in enumerate(zip(rows, bounds))
+            for idx, (row, bound) in enumerate(zip(amat, bvec))
         ]
         guarded = self.velocity_filter.project(command, constraints)
         return guarded.value, {
@@ -329,40 +355,43 @@ class TrustUpController:
         dt: float,
     ) -> Tuple[np.ndarray, Dict[str, object]]:
         dt = max(float(dt), 1.0e-3)
-        nominal = self.policy(pursuer, target, self.command_velocity)
-        adaptive_info = self.adaptive.update(pursuer, target, obstacles, self.previous_safe_accel, dt, self.safety)
-        nominal = self.adaptive.compensate(nominal)
+        # pi_i is the paper nominal action/RL output in Eq. (35); the safety
+        # filter computes v_i^* = argmin 1/2||v_i-pi_i||^2 subject to
+        # K_{u,i} intersect K_{c,i} intersect K_{s,i}.
+        pi_i = self.policy(pursuer, target, self.command_velocity)
+        a_hat = self.adaptive.update(pursuer, target, obstacles, self.previous_safe_accel, dt, self.safety)
+        pi_i = self.adaptive.compensate(pi_i)
         if self.limits.max_jerk > 0.0:
-            nominal = self.previous_safe_accel + clamp_norm(nominal - self.previous_safe_accel, self.limits.max_jerk * dt)
-        adaptive_margin = float(self.safety.robustness_margin) + float(adaptive_info.margin_scale)
-        rows: List[np.ndarray] = []
-        bounds: List[float] = []
+            pi_i = self.previous_safe_accel + clamp_norm(pi_i - self.previous_safe_accel, self.limits.max_jerk * dt)
+        rho_i = float(self.safety.robustness_margin) + float(a_hat.margin_scale)
+        amat: List[np.ndarray] = []
+        bvec: List[float] = []
         barrier_info: Dict[str, object] = {"collisions": []}
 
-        barrier_info["sensing"] = self._append_sensing_constraint(rows, bounds, pursuer, target, adaptive_margin)
-        barrier_info["target_collision"] = self._append_collision_constraint(rows, bounds, pursuer, target, adaptive_margin)
+        barrier_info["sensing"] = self._append_sensing_constraint(amat, bvec, pursuer, target, rho_i)
+        barrier_info["target_collision"] = self._append_collision_constraint(amat, bvec, pursuer, target, rho_i)
         for obstacle in obstacles:
-            info = self._append_collision_constraint(rows, bounds, pursuer, obstacle, adaptive_margin)
+            info = self._append_collision_constraint(amat, bvec, pursuer, obstacle, rho_i)
             info["name"] = obstacle.name
             barrier_info["collisions"].append(info)
-        barrier_info["input"] = self._append_input_constraint(rows, bounds, pursuer, target, adaptive_margin)
+        barrier_info["input"] = self._append_input_constraint(amat, bvec, pursuer, target, rho_i)
 
         constraints = [
             LinearSafetyConstraint.make("hocbf_%02d" % idx, row, bound, kind="hocbf")
-            for idx, (row, bound) in enumerate(zip(rows, bounds))
+            for idx, (row, bound) in enumerate(zip(amat, bvec))
         ]
-        result = self.accel_filter.project(nominal, constraints)
+        result = self.accel_filter.project(pi_i, constraints)
         safe_accel = clamp_norm(result.value, self.limits.max_accel)
         self.previous_safe_accel = safe_accel.copy()
         self.command_velocity = self.command_velocity + safe_accel * dt
         self.command_velocity, guard_diag = self.guard_velocity_command(self.command_velocity, pursuer, target, [target] + list(obstacles))
 
         diag: Dict[str, object] = {
-            "nominal_accel": nominal,
+            "nominal_accel": pi_i,
             "safe_accel": safe_accel,
             "command_velocity": self.command_velocity.copy(),
-            "adaptive": adaptive_info.as_dict(),
-            "adaptive_robustness_margin": adaptive_margin,
+            "adaptive": a_hat.as_dict(),
+            "adaptive_robustness_margin": rho_i,
             "qp_feasible": result.feasible,
             "qp_active": result.active,
             "qp_active_names": result.active_names(),
