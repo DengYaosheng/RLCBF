@@ -1,0 +1,18 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="deploy_config" default="$(find trust_up_xtdrone)/config/mid360_px4.yaml"/>
+  <arg name="pursuit_config" default="$(find trust_up_xtdrone)/config/paper_target_pursuit.yaml"/>
+  <arg name="auto_arm" default="false"/>
+  <arg name="auto_offboard" default="false"/>
+
+  <node pkg="trust_up_xtdrone" type="mid360_obstacle_guard.py" name="mid360_obstacle_guard" output="screen">
+    <param name="config_file" value="$(arg deploy_config)"/>
+  </node>
+
+  <node pkg="trust_up_xtdrone" type="mid360_px4_adapter.py" name="mid360_px4_adapter" output="screen">
+    <param name="deploy_config" value="$(arg deploy_config)"/>
+    <param name="pursuit_config" value="$(arg pursuit_config)"/>
+    <param name="auto_arm" value="$(arg auto_arm)"/>
+    <param name="auto_offboard" value="$(arg auto_offboard)"/>
+  </node>
+</launch>

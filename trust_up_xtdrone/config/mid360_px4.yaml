@@ -1,0 +1,58 @@
+paper_target_pursuit_config: "$(find trust_up_xtdrone)/config/paper_target_pursuit.yaml"
+
+px4:
+  # MAVROS consumes ROS ENU fields on setpoint_raw/local and converts to PX4 NED.
+  mavros_ns: /mavros
+  publish_rate_hz: 30.0
+  auto_arm: false
+  auto_offboard: false
+  setpoint_warmup_s: 2.0
+  use_velocity_setpoint: true
+
+state_estimation:
+  # FAST-LIO/LIO-SAM commonly publish one of these.  Remap in launch if needed.
+  odom_topic: /Odometry
+  frame_id: map
+  child_frame_id: base_link
+  stale_timeout_s: 0.25
+
+target_tracking:
+  target_odom_topic: /target_tracker/odom
+  target_timeout_s: 0.3
+  fallback_hover_when_target_lost: true
+
+mid360:
+  # Prefer a registered/map-frame cloud from FAST-LIO, e.g. /cloud_registered.
+  # Raw /livox/lidar is not in the same frame as MAVROS local odometry.
+  pointcloud_topic: /cloud_registered
+  obstacle_pose_topic: /trust_up/dynamic_obstacles
+  min_range: 0.35
+  max_range: 6.0
+  z_min: -0.8
+  z_max: 1.2
+  voxel_size: 0.35
+  max_obstacles: 12
+  obstacle_radius: 0.35
+
+failsafe:
+  min_altitude: 0.6
+  max_altitude: 8.0
+  geofence_xyz: [8.0, 8.0, 5.0]
+  hover_on_qp_infeasible: true
+  land_on_hard_violation: false
+
+controller_overrides:
+  vehicle_profile:
+    name: mid360_px4_first_flight_safe
+    max_speed: 1.0
+    max_vertical_speed: 0.4
+    max_accel: 0.8
+    max_yaw_rate: 0.5
+  nominal_policy:
+    max_nominal_accel: 0.7
+    kp_range: 0.9
+    kd_relative: 0.8
+  safety:
+    use_object_radius: true
+    velocity_barrier_gamma: 4.0
+    robustness_margin: 0.10

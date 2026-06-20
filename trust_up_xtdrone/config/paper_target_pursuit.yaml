@@ -1,0 +1,152 @@
+paper:
+  arxiv: "2411.17552v3"
+  title: "TRUST-UP: Trustworthy Reinforcement learning Using Safe Techniques for UAV Pursuit"
+  dt: 0.1
+  steps: 600
+  sac_training_episodes: 1500
+  reward_inside_shell: 0.1
+  reward_outside_gain: -0.1
+
+scenario:
+  name: circle
+  # The paper trajectories include vertical components down to z=-5.  Gazebo/PX4
+  # cannot reproduce below-ground flight, so the complete experiment is lifted
+  # by 6 m while preserving all relative geometry and trust radii.
+  gazebo_frame_offset: [0.0, 0.0, 6.0]
+  use_gazebo_offset: true
+  initialize_targets_from_reference: true
+  use_dimension_consistent_reference_velocity: true
+  # Paper Eq. (60) references use 5 sin(0.1 t), 5 cos(0.1 t), and 5 sin(0.2 t).
+  # Do not scale or slow these in the default config; the physical UAV envelope
+  # is handled below through center-to-center hull padding.
+  reference_scale: 1.0
+  angular_rate: 0.1
+  target_potential_gain: 1.0
+  target_potential_clip: 1.5
+
+trajectory_smoothing:
+  # Fei-Gao/Fast-Planner-style local uniform cubic B-spline smoothing:
+  # control-point smoothness + reference fitting + obstacle clearance +
+  # dynamic feasibility penalties, implemented without scipy for onboard reuse.
+  enabled: true
+  knot_dt: 1.2
+  horizon_control_points: 10
+  iterations: 18
+  step_size: 0.055
+  fit_weight: 1.0
+  endpoint_weight: 2.6
+  smooth_weight: 0.55
+  obstacle_weight: 0.16
+  dynamic_weight: 0.20
+  obstacle_clearance: 0.90
+  max_ref_speed: 1.65
+  max_ref_accel: 1.90
+  max_ref_jerk: 3.00
+  dynamic_projection_iterations: 4
+  limit_integrated_target: true
+  # Target UAVs are physical XTDrone vehicles too.  Keep their hulls separated
+  # by this clearance, with a wider activation band so avoidance is smooth.
+  target_pair_clearance: 1.35
+  target_pair_activation_margin: 1.85
+  target_pair_gain: 1.70
+  target_pair_hard_gain: 12.0
+  target_pair_damping: 2.20
+
+command_smoothing:
+  enabled: true
+  tau_s: 0.22
+  max_command_accel: 2.8
+  max_vertical_command_accel: 1.9
+
+xtdrone:
+  uav_type: iris
+  pursuer_ids: [0, 1]
+  command_namespace: /xtdrone
+  auto_arm: false
+  auto_offboard: false
+  auto_start_delay_s: 8.0
+  publish_rate_hz: 30.0
+  stale_timeout_s: 0.7
+
+physical_envelope:
+  # XTDrone/PX4 iris body+rotor footprint envelope used to convert the paper's
+  # point-agent trust radii into physical center-to-center constraints.
+  # iris_zhihang has a 0.47 m body box and 0.128 m propeller radius; using a
+  # 0.40 m horizontal footprint radius accounts for arm/prop length instead of
+  # only the compact fuselage.
+  uav_body_length: 0.47
+  uav_propeller_radius: 0.128
+  uav_radius: 0.40
+
+target_visual:
+  xtdrone_sdf: "/home/ysdeng/projects/XTDrone/sitl_config/models/iris_zhihang/iris_zhihang.sdf"
+
+vehicle_profile:
+  name: tello_limited_px4_sitl
+  max_speed: 3.8
+  max_vertical_speed: 2.0
+  max_accel: 4.2
+  max_jerk: 8.0
+  max_yaw_rate: 0.8
+  takeoff_altitude: 2.0
+
+safety:
+  collision_radius: 0.5
+  sensing_radius: 1.0
+  desired_range: 0.82
+  use_object_radius: true
+  hocbf_k0: 3.6
+  hocbf_k1: 4.0
+  sensing_k0: 3.0
+  sensing_k1: 3.6
+  robustness_margin: 0.28
+  input_alpha: 2.0
+  kappa_c: 0.45
+  kappa_ell: 0.75
+  kappa_epsilon: 0.04
+  velocity_barrier_gamma: 5.0
+  velocity_barrier_margin: 0.10
+  # Guard shell used only by the CBF/velocity guard.  The paper/RViz constraint
+  # remains [collision_radius, sensing_radius], but enforcement stays away from
+  # both boundaries to absorb PX4 velocity tracking lag.
+  tracking_inner_margin: 0.08
+  tracking_outer_margin: 0.03
+  obstacle_enforcement_margin: 0.10
+
+nominal_policy:
+  type: shell_pd
+  torchscript_path: ""
+  kp_range: 1.25
+  kd_relative: 1.45
+  target_velocity_feedforward: 0.30
+  max_nominal_accel: 3.0
+
+targets:
+  - name: trust_target_0
+    initial_position: [0.0, 5.0, 0.0]
+    radius: 0.40
+  - name: trust_target_1
+    initial_position: [0.0, 0.0, 5.0]
+    radius: 0.40
+
+pursuers:
+  - name: iris_0
+    initial_position: [-0.7, 4.35, 0.0]
+    radius: 0.40
+  - name: iris_1
+    initial_position: [-0.7, -0.35, 5.0]
+    radius: 0.40
+
+obstacles:
+  - name: paper_obstacle_0
+    center: [4.70, 3.25, 3.00]
+    radius: 0.3
+  - name: paper_obstacle_1
+    center: [-4.20, 3.00, 4.75]
+    radius: 0.3
+
+topics:
+  target_odom_prefix: /trust_up
+  diagnostics: /trust_up/diagnostics
+  markers: /trust_up/markers
+  dynamic_obstacles: /trust_up/dynamic_obstacles

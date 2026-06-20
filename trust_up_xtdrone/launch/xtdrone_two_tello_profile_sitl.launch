@@ -1,0 +1,83 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="xtdrone_root" default="/home/ysdeng/projects/XTDrone"/>
+  <arg name="config" default="$(find trust_up_xtdrone)/config/paper_target_pursuit.yaml"/>
+  <arg name="scenario" default="circle"/>
+  <arg name="vehicle" default="iris"/>
+  <arg name="sdf" default="iris"/>
+  <arg name="world" default="$(find trust_up_xtdrone)/worlds/trust_up_target_pursuit.world"/>
+  <arg name="gui" default="true"/>
+  <arg name="paused" default="false"/>
+  <arg name="auto_arm" default="true"/>
+  <arg name="auto_offboard" default="true"/>
+  <arg name="auto_start_delay_s" default="8.0"/>
+  <arg name="trajectory_start_delay_s" default="30.0"/>
+  <arg name="uav0_x" default="$(eval -0.7 if arg('scenario') == 'circle' else -0.3354)"/>
+  <arg name="uav0_y" default="$(eval 4.35 if arg('scenario') == 'circle' else -0.6708)"/>
+  <arg name="uav0_z" default="0.2"/>
+  <arg name="uav1_x" default="$(eval -0.7 if arg('scenario') == 'circle' else -0.3354)"/>
+  <arg name="uav1_y" default="$(eval -0.35 if arg('scenario') == 'circle' else 3.0)"/>
+  <arg name="uav1_z" default="0.2"/>
+
+  <env name="GAZEBO_MODEL_PATH" value="$(arg xtdrone_root)/sitl_config/models:$(optenv GAZEBO_MODEL_PATH)"/>
+
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="gui" value="$(arg gui)"/>
+    <arg name="world_name" value="$(arg world)"/>
+    <arg name="paused" value="$(arg paused)"/>
+  </include>
+
+  <group ns="iris_0">
+    <arg name="ID0" value="0"/>
+    <arg name="fcu_url0" value="udp://:14540@localhost:14580"/>
+    <include file="$(find px4)/launch/single_vehicle_spawn.launch">
+      <arg name="x" value="$(arg uav0_x)"/>
+      <arg name="y" value="$(arg uav0_y)"/>
+      <arg name="z" value="$(arg uav0_z)"/>
+      <arg name="vehicle" value="$(arg vehicle)"/>
+      <arg name="mavlink_udp_port" value="14560"/>
+      <arg name="mavlink_tcp_port" value="4560"/>
+      <arg name="ID" value="$(arg ID0)"/>
+    </include>
+    <include file="$(find mavros)/launch/px4.launch">
+      <arg name="fcu_url" value="$(arg fcu_url0)"/>
+      <arg name="gcs_url" value=""/>
+      <arg name="tgt_system" value="1"/>
+      <arg name="tgt_component" value="1"/>
+    </include>
+  </group>
+
+  <group ns="iris_1">
+    <arg name="ID1" value="1"/>
+    <arg name="fcu_url1" value="udp://:14541@localhost:14581"/>
+    <include file="$(find px4)/launch/single_vehicle_spawn.launch">
+      <arg name="x" value="$(arg uav1_x)"/>
+      <arg name="y" value="$(arg uav1_y)"/>
+      <arg name="z" value="$(arg uav1_z)"/>
+      <arg name="vehicle" value="$(arg vehicle)"/>
+      <arg name="mavlink_udp_port" value="14561"/>
+      <arg name="mavlink_tcp_port" value="4561"/>
+      <arg name="ID" value="$(arg ID1)"/>
+    </include>
+    <include file="$(find mavros)/launch/px4.launch">
+      <arg name="fcu_url" value="$(arg fcu_url1)"/>
+      <arg name="gcs_url" value=""/>
+      <arg name="tgt_system" value="2"/>
+      <arg name="tgt_component" value="1"/>
+    </include>
+  </group>
+
+  <node pkg="trust_up_xtdrone" type="xtdrone_velocity_bridge.py" name="iris_0_velocity_bridge" args="iris 0" output="screen"/>
+  <node pkg="trust_up_xtdrone" type="xtdrone_velocity_bridge.py" name="iris_1_velocity_bridge" args="iris 1" output="screen"/>
+
+  <include file="$(find trust_up_xtdrone)/launch/paper_target_pursuit.launch">
+    <arg name="config" value="$(arg config)"/>
+    <arg name="scenario" value="$(arg scenario)"/>
+    <arg name="uav_type" value="iris"/>
+    <arg name="auto_arm" value="$(arg auto_arm)"/>
+    <arg name="auto_offboard" value="$(arg auto_offboard)"/>
+    <arg name="auto_start_delay_s" value="$(arg auto_start_delay_s)"/>
+    <arg name="trajectory_start_delay_s" value="$(arg trajectory_start_delay_s)"/>
+    <arg name="pursuit_start_delay_s" value="$(arg trajectory_start_delay_s)"/>
+  </include>
+</launch>

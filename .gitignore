@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+.pytest_cache/
+
+# ROS / catkin
+build/
+devel/
+install/
+log/
+.catkin_tools/
+
+# Runtime outputs
+*.bag
+*.db3
+*.log
+headless_result.csv
+outputs/
+results/
+
+# Gazebo / RViz / local state
+*.world.backup
+*.rviz.backup
+.gazebo/
+
+# Editors
+.vscode/
+.idea/
+*~
+*.swp

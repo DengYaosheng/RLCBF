@@ -1,0 +1,16 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>trust_up_xtdrone_ros2</name>
+  <version>0.1.0</version>
+  <description>ROS2 adapter for the TRUST-UP XTDrone target pursuit controller.</description>
+  <maintainer email="ysdeng@example.com">ysdeng</maintainer>
+  <license>MIT</license>
+  <buildtool_depend>ament_python</buildtool_depend>
+  <depend>rclpy</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>std_msgs</depend>
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

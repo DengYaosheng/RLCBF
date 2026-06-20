@@ -1,0 +1,35 @@
+ros1_xtdrone_topics:
+  command_velocity_enu:
+    type: geometry_msgs/Twist
+    examples:
+      - /xtdrone/iris_0/cmd_vel_enu
+      - /xtdrone/iris_1/cmd_vel_enu
+  target_odometry:
+    type: nav_msgs/Odometry
+    examples:
+      - /trust_up/target_0/odom
+      - /trust_up/target_1/odom
+  obstacle_pose_array:
+    type: geometry_msgs/PoseArray
+    topic: /trust_up/dynamic_obstacles
+
+isaac_sim_notes:
+  required_frames:
+    - map
+    - base_link
+  bridge_direction:
+    target_odometry: isaac_to_ros
+    obstacle_pose_array: isaac_to_ros
+    command_velocity_enu: ros_to_isaac_or_ros_to_px4
+  clock:
+    use_sim_time: true
+  recommendation: >
+    Keep the TRUST-UP node outside Isaac Sim and bridge only state and command
+    topics. This preserves the same controller used in XTDrone and PX4 tests.
+
+ros1_adapter:
+  launch: trust_up_xtdrone/launch/isaac_paper_target_pursuit.launch
+  config: trust_up_xtdrone/config/isaac_sim.yaml
+  vehicle_state_direction: isaac_to_ros
+  vehicle_command_direction: ros_to_isaac
+  default_target_owner: trust_up

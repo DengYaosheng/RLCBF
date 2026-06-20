@@ -1,0 +1,36 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="config" default="$(find trust_up_xtdrone)/config/paper_target_pursuit.yaml"/>
+  <arg name="scenario" default="circle"/>
+  <arg name="uav_type" default="iris"/>
+  <arg name="auto_arm" default="false"/>
+  <arg name="auto_offboard" default="false"/>
+  <arg name="auto_start_delay_s" default="8.0"/>
+  <arg name="trajectory_start_delay_s" default="0.0"/>
+  <arg name="pursuit_start_delay_s" default="0.0"/>
+  <arg name="spawn_gazebo_visuals" default="true"/>
+  <arg name="set_gazebo_model_state" default="true"/>
+
+  <node if="$(arg spawn_gazebo_visuals)" pkg="trust_up_xtdrone" type="spawn_paper_world.py" name="spawn_paper_world" output="screen">
+    <param name="config_file" value="$(arg config)"/>
+    <param name="scenario" value="$(arg scenario)"/>
+  </node>
+
+  <node pkg="trust_up_xtdrone" type="paper_target_server.py" name="paper_target_server" output="screen">
+    <param name="config_file" value="$(arg config)"/>
+    <param name="scenario" value="$(arg scenario)"/>
+    <param name="set_gazebo_model_state" value="$(arg set_gazebo_model_state)"/>
+    <param name="gazebo_move_start_delay_s" value="5.0"/>
+    <param name="trajectory_start_delay_s" value="$(arg trajectory_start_delay_s)"/>
+  </node>
+
+  <node pkg="trust_up_xtdrone" type="trust_up_pursuit_node.py" name="trust_up_pursuit_node" output="screen">
+    <param name="config_file" value="$(arg config)"/>
+    <param name="scenario" value="$(arg scenario)"/>
+    <param name="uav_type" value="$(arg uav_type)"/>
+    <param name="auto_arm" value="$(arg auto_arm)"/>
+    <param name="auto_offboard" value="$(arg auto_offboard)"/>
+    <param name="auto_start_delay_s" value="$(arg auto_start_delay_s)"/>
+    <param name="pursuit_start_delay_s" value="$(arg pursuit_start_delay_s)"/>
+  </node>
+</launch>

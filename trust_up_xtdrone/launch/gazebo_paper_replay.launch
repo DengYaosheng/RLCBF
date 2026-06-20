@@ -1,0 +1,50 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="xtdrone_root" default="/home/ysdeng/projects/XTDrone"/>
+  <arg name="config" default="$(find trust_up_xtdrone)/config/paper_target_pursuit.yaml"/>
+  <arg name="scenario" default="circle"/>
+  <arg name="world" default="$(find trust_up_xtdrone)/worlds/trust_up_target_pursuit.world"/>
+  <arg name="gui" default="true"/>
+  <arg name="paused" default="false"/>
+  <arg name="loop" default="true"/>
+  <arg name="visual_rate_hz" default="60.0"/>
+  <arg name="visual_yaw_rate" default="3.0"/>
+  <arg name="trail_stride" default="4"/>
+  <arg name="max_trail_points" default="95"/>
+  <arg name="enable_trails" default="true"/>
+  <arg name="software_rendering" default="false"/>
+  <arg name="ogre_rtt_mode" default="FBO"/>
+  <arg name="verbose" default="false"/>
+  <arg name="spawn_visual_volumes" default="true"/>
+  <arg name="max_replay_steps" default="0"/>
+  <arg name="shutdown_when_done" default="false"/>
+  <arg name="gazebo_model_path" default="/usr/share/gazebo-11/models"/>
+
+  <env name="GAZEBO_MODEL_PATH" value="$(arg gazebo_model_path)"/>
+  <env name="QT_X11_NO_MITSHM" value="1"/>
+  <env name="OGRE_RTT_MODE" value="$(arg ogre_rtt_mode)"/>
+  <env if="$(arg software_rendering)" name="LIBGL_ALWAYS_SOFTWARE" value="1"/>
+
+  <include file="$(find gazebo_ros)/launch/empty_world.launch">
+    <arg name="gui" value="false"/>
+    <arg name="world_name" value="$(arg world)"/>
+    <arg name="paused" value="$(arg paused)"/>
+    <arg name="verbose" value="$(arg verbose)"/>
+  </include>
+
+  <node if="$(arg gui)" pkg="trust_up_xtdrone" type="gzclient_raw.py" name="gazebo_gui_raw" output="screen" args="$(arg verbose)"/>
+
+  <node pkg="trust_up_xtdrone" type="gazebo_paper_replay_visualizer.py" name="gazebo_paper_replay_visualizer" output="screen" required="true">
+    <param name="config_file" value="$(arg config)"/>
+    <param name="scenario" value="$(arg scenario)"/>
+    <param name="loop" value="$(arg loop)"/>
+    <param name="visual_rate_hz" value="$(arg visual_rate_hz)"/>
+    <param name="visual_yaw_rate" value="$(arg visual_yaw_rate)"/>
+    <param name="trail_stride" value="$(arg trail_stride)"/>
+    <param name="max_trail_points" value="$(arg max_trail_points)"/>
+    <param name="enable_trails" value="$(arg enable_trails)"/>
+    <param name="spawn_visual_volumes" value="$(arg spawn_visual_volumes)"/>
+    <param name="max_replay_steps" value="$(arg max_replay_steps)"/>
+    <param name="shutdown_when_done" value="$(arg shutdown_when_done)"/>
+  </node>
+</launch>

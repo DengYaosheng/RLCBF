@@ -1,0 +1,50 @@
+paper_target_pursuit_config: "$(find trust_up_xtdrone)/config/paper_target_pursuit.yaml"
+
+isaac:
+  use_sim_time: true
+  world_frame: map
+  publish_rate_hz: 60.0
+  passthrough_dynamic_obstacles: true
+  dynamic_obstacles_in: /isaac/trust_up/dynamic_obstacles
+  dynamic_obstacles_out: /trust_up/dynamic_obstacles
+
+vehicles:
+  - name: iris_0
+    isaac_odom_topic: /isaac/iris_0/odom
+    mavros_odom_topic: /iris_0/mavros/local_position/odom
+    mavros_pose_topic: /iris_0/mavros/local_position/pose
+    command_in_topic: /xtdrone/iris_0/cmd_vel_enu
+    isaac_cmd_topic: /isaac/iris_0/cmd_vel_enu
+  - name: iris_1
+    isaac_odom_topic: /isaac/iris_1/odom
+    mavros_odom_topic: /iris_1/mavros/local_position/odom
+    mavros_pose_topic: /iris_1/mavros/local_position/pose
+    command_in_topic: /xtdrone/iris_1/cmd_vel_enu
+    isaac_cmd_topic: /isaac/iris_1/cmd_vel_enu
+
+targets:
+  # source=trust_up means paper_target_server owns the target trajectory and
+  # Isaac only renders/follows pose commands. source=isaac means Isaac publishes
+  # target odometry and the adapter republishes it to /trust_up/target_i/odom.
+  - name: trust_target_0
+    source: trust_up
+    trust_odom_topic: /trust_up/target_0/odom
+    isaac_odom_topic: /isaac/trust_target_0/odom
+    isaac_pose_cmd_topic: /isaac/trust_target_0/pose_cmd
+    isaac_cmd_topic: /isaac/trust_target_0/cmd_vel_enu
+  - name: trust_target_1
+    source: trust_up
+    trust_odom_topic: /trust_up/target_1/odom
+    isaac_odom_topic: /isaac/trust_target_1/odom
+    isaac_pose_cmd_topic: /isaac/trust_target_1/pose_cmd
+    isaac_cmd_topic: /isaac/trust_target_1/cmd_vel_enu
+
+scene:
+  stage_path: /tmp/trust_up_target_pursuit.usd
+  meters_per_unit: 1.0
+  ground_size: 36.0
+  camera_position: [-14.0, -17.0, 13.5]
+  camera_target: [0.0, 2.8, 6.5]
+  # Optional USD assets. Leave empty to use lightweight primitive quadrotors.
+  pursuer_usd: ""
+  target_usd: ""

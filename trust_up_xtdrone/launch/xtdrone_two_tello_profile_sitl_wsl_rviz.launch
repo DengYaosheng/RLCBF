@@ -1,0 +1,28 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="config" default="$(find trust_up_xtdrone)/config/paper_target_pursuit.yaml"/>
+  <arg name="scenario" default="circle"/>
+  <arg name="auto_arm" default="true"/>
+  <arg name="auto_offboard" default="true"/>
+  <arg name="auto_start_delay_s" default="8.0"/>
+  <arg name="trajectory_start_delay_s" default="30.0"/>
+  <arg name="rviz" default="true"/>
+  <arg name="rviz_config" default="$(find trust_up_xtdrone)/rviz/trust_up_target_pursuit.rviz"/>
+  <arg name="libgl_always_software" default="1"/>
+
+  <include file="$(find trust_up_xtdrone)/launch/xtdrone_two_tello_profile_sitl.launch">
+    <arg name="config" value="$(arg config)"/>
+    <arg name="scenario" value="$(arg scenario)"/>
+    <arg name="gui" value="false"/>
+    <arg name="auto_arm" value="$(arg auto_arm)"/>
+    <arg name="auto_offboard" value="$(arg auto_offboard)"/>
+    <arg name="auto_start_delay_s" value="$(arg auto_start_delay_s)"/>
+    <arg name="trajectory_start_delay_s" value="$(arg trajectory_start_delay_s)"/>
+  </include>
+
+  <node if="$(arg rviz)" pkg="rviz" type="rviz" name="trust_up_target_pursuit_rviz" args="-d $(arg rviz_config)" output="screen">
+    <env name="QT_X11_NO_MITSHM" value="1"/>
+    <env name="QT_QPA_PLATFORM" value="xcb"/>
+    <env name="LIBGL_ALWAYS_SOFTWARE" value="$(arg libgl_always_software)"/>
+  </node>
+</launch>

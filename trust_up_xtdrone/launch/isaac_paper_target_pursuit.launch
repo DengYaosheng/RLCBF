@@ -1,0 +1,34 @@
+<?xml version="1.0"?>
+<launch>
+  <arg name="config" default="$(find trust_up_xtdrone)/config/paper_target_pursuit.yaml"/>
+  <arg name="isaac_config" default="$(find trust_up_xtdrone)/config/isaac_sim.yaml"/>
+  <arg name="scenario" default="circle"/>
+  <arg name="uav_type" default="iris"/>
+  <arg name="auto_arm" default="false"/>
+  <arg name="auto_offboard" default="false"/>
+  <arg name="trajectory_start_delay_s" default="0.0"/>
+  <arg name="rviz" default="true"/>
+  <arg name="rviz_config" default="$(find trust_up_xtdrone)/rviz/trust_up_target_pursuit.rviz"/>
+
+  <param name="/use_sim_time" value="true"/>
+
+  <node pkg="trust_up_xtdrone" type="isaac_ros1_adapter.py" name="isaac_ros1_adapter" output="screen">
+    <param name="config_file" value="$(arg isaac_config)"/>
+  </node>
+
+  <include file="$(find trust_up_xtdrone)/launch/paper_target_pursuit.launch">
+    <arg name="config" value="$(arg config)"/>
+    <arg name="scenario" value="$(arg scenario)"/>
+    <arg name="uav_type" value="$(arg uav_type)"/>
+    <arg name="auto_arm" value="$(arg auto_arm)"/>
+    <arg name="auto_offboard" value="$(arg auto_offboard)"/>
+    <arg name="trajectory_start_delay_s" value="$(arg trajectory_start_delay_s)"/>
+    <arg name="pursuit_start_delay_s" value="$(arg trajectory_start_delay_s)"/>
+    <arg name="spawn_gazebo_visuals" value="false"/>
+    <arg name="set_gazebo_model_state" value="false"/>
+  </include>
+
+  <node if="$(arg rviz)" pkg="rviz" type="rviz" name="trust_up_isaac_rviz" args="-d $(arg rviz_config)" output="screen">
+    <env name="QT_X11_NO_MITSHM" value="1"/>
+  </node>
+</launch>
