@@ -15,7 +15,7 @@
 RLCBF collects research prototypes for safe reinforcement-learning control with
 control barrier functions. The newest stack, `trust_up_xtdrone`, is a
 ROS/Gazebo/XTDrone reproduction-oriented implementation of the TRUST-UP target
-pursuit experiments from arXiv `2411.17552v3`.
+pursuit experiments from 10.1016/j.aei.2026.104963 (https://www.sciencedirect.com/science/article/abs/pii/S1474034626006555).
 
 The package focuses on a practical research workflow: reproduce the paper
 geometry, inspect the result in Gazebo, validate constraints automatically, and
