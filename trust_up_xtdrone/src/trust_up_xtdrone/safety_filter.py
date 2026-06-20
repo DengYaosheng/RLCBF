@@ -41,12 +41,7 @@ class LinearSafetyConstraint:
 
 
 @dataclass
-class SafetyFilterResult:
-    value: np.ndarray
-    feasible: bool
-    active: tuple
-    max_violation: float
-    objective: float
+class SafetyFilterResult(ProjectionResult):
     solver: str
     constraints: List[LinearSafetyConstraint]
 

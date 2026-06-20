@@ -2,15 +2,14 @@
 
 import math
 from dataclasses import dataclass, field
-from typing import Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
+from typing import Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
+from .adaptive import AdaptiveRobustnessEstimator
 from .planning import BsplineOptimizerConfig, FastPlannerBsplineOptimizer, UniformCubicBspline
 from .safety_filter import CbfQpSafetyFilter, LinearSafetyConstraint
-
-
-EPS = 1.0e-9
+from .utils import EPS, clamp_norm, dataclass_subset
 
 
 @dataclass
@@ -40,14 +39,6 @@ class AgentState:
             stamp=float(stamp),
             name=name,
         )
-
-
-def clamp_norm(vec: Iterable[float], limit: float) -> np.ndarray:
-    arr = np.asarray(vec, dtype=float).reshape(-1)
-    norm = float(np.linalg.norm(arr))
-    if limit > 0.0 and norm > limit:
-        return arr * (limit / max(norm, EPS))
-    return arr
 
 
 def yaw_rate_to_target(pos: np.ndarray, target: np.ndarray, current_yaw: float = 0.0, max_yaw_rate: float = 0.8) -> float:
@@ -125,22 +116,10 @@ class PolicyParameters:
 
 
 @dataclass
-class TrajectorySmoothingParameters:
+class TrajectorySmoothingParameters(BsplineOptimizerConfig):
     enabled: bool = False
     knot_dt: float = 0.8
     horizon_control_points: int = 8
-    iterations: int = 8
-    step_size: float = 0.08
-    fit_weight: float = 1.0
-    endpoint_weight: float = 3.0
-    smooth_weight: float = 0.18
-    obstacle_weight: float = 0.10
-    dynamic_weight: float = 0.08
-    obstacle_clearance: float = 0.65
-    max_ref_speed: float = 1.6
-    max_ref_accel: float = 1.2
-    max_ref_jerk: float = 0.0
-    dynamic_projection_iterations: int = 3
     limit_integrated_target: bool = True
     target_pair_clearance: float = 1.0
     target_pair_activation_margin: float = 1.0
@@ -183,10 +162,12 @@ class TrustUpController:
         safety: Optional[SafetyParameters] = None,
         limits: Optional[VehicleLimits] = None,
         policy: Optional[NominalPolicy] = None,
+        adaptive: Optional[AdaptiveRobustnessEstimator] = None,
     ):
         self.safety = safety or SafetyParameters()
         self.limits = limits or VehicleLimits()
         self.policy = policy or NominalPolicy(self.safety, self.limits, PolicyParameters())
+        self.adaptive = adaptive or AdaptiveRobustnessEstimator()
         self.command_velocity = np.zeros(3)
         self.previous_safe_accel = np.zeros(3)
         self.accel_filter = CbfQpSafetyFilter("hocbf_accel")
@@ -195,6 +176,7 @@ class TrustUpController:
     def reset(self, initial_velocity: Optional[Sequence[float]] = None) -> None:
         self.command_velocity = np.asarray(initial_velocity if initial_velocity is not None else [0.0, 0.0, 0.0], dtype=float)
         self.previous_safe_accel = np.zeros(3)
+        self.adaptive.reset(initial_velocity)
 
     def _kappa(self, zeta: np.ndarray, zeta_dot: np.ndarray) -> Tuple[float, float]:
         s = float(np.dot(zeta, zeta))
@@ -211,6 +193,7 @@ class TrustUpController:
         bounds: List[float],
         pursuer: AgentState,
         obstacle: AgentState,
+        robustness_margin: Optional[float] = None,
     ) -> Dict[str, float]:
         is_target = obstacle.name.startswith("target") or obstacle.name.startswith("trust_target")
         radius = self.safety.enforced_collision_bound(pursuer, obstacle, obstacle=not is_target)
@@ -225,7 +208,7 @@ class TrustUpController:
             - 2.0 * float(np.dot(r_dot, r_dot))
             - self.safety.hocbf_k1 * h_dot
             - self.safety.hocbf_k0 * h
-            + self.safety.robustness_margin
+            + float(self.safety.robustness_margin if robustness_margin is None else robustness_margin)
         )
         if float(np.linalg.norm(a)) > 1.0e-6:
             rows.append(a)
@@ -238,6 +221,7 @@ class TrustUpController:
         bounds: List[float],
         pursuer: AgentState,
         target: AgentState,
+        robustness_margin: Optional[float] = None,
     ) -> Dict[str, float]:
         radius = self.safety.enforced_sensing_bound(pursuer, target)
         paper_radius = self.safety.sensing_bound(pursuer, target)
@@ -247,7 +231,7 @@ class TrustUpController:
         h_dot = -2.0 * float(np.dot(zeta, zeta_dot))
         a = -2.0 * zeta
         b = (
-            self.safety.robustness_margin
+            float(self.safety.robustness_margin if robustness_margin is None else robustness_margin)
             - 2.0 * float(np.dot(zeta, target.acceleration))
             + 2.0 * float(np.dot(zeta_dot, zeta_dot))
             - self.safety.sensing_k1 * h_dot
@@ -264,6 +248,7 @@ class TrustUpController:
         bounds: List[float],
         pursuer: AgentState,
         target: AgentState,
+        robustness_margin: Optional[float] = None,
     ) -> Dict[str, float]:
         zeta = pursuer.position - target.position
         zeta_dot = self.command_velocity - target.velocity
@@ -272,7 +257,7 @@ class TrustUpController:
         h = float(speed_bound * speed_bound - np.dot(self.command_velocity, self.command_velocity))
         a = -2.0 * self.command_velocity
         b = (
-            self.safety.robustness_margin
+            float(self.safety.robustness_margin if robustness_margin is None else robustness_margin)
             - 2.0 * speed_bound * kappa_dot
             - self.safety.input_alpha * h
         )
@@ -345,19 +330,22 @@ class TrustUpController:
     ) -> Tuple[np.ndarray, Dict[str, object]]:
         dt = max(float(dt), 1.0e-3)
         nominal = self.policy(pursuer, target, self.command_velocity)
+        adaptive_info = self.adaptive.update(pursuer, target, obstacles, self.previous_safe_accel, dt, self.safety)
+        nominal = self.adaptive.compensate(nominal)
         if self.limits.max_jerk > 0.0:
             nominal = self.previous_safe_accel + clamp_norm(nominal - self.previous_safe_accel, self.limits.max_jerk * dt)
+        adaptive_margin = float(self.safety.robustness_margin) + float(adaptive_info.margin_scale)
         rows: List[np.ndarray] = []
         bounds: List[float] = []
         barrier_info: Dict[str, object] = {"collisions": []}
 
-        barrier_info["sensing"] = self._append_sensing_constraint(rows, bounds, pursuer, target)
-        barrier_info["target_collision"] = self._append_collision_constraint(rows, bounds, pursuer, target)
+        barrier_info["sensing"] = self._append_sensing_constraint(rows, bounds, pursuer, target, adaptive_margin)
+        barrier_info["target_collision"] = self._append_collision_constraint(rows, bounds, pursuer, target, adaptive_margin)
         for obstacle in obstacles:
-            info = self._append_collision_constraint(rows, bounds, pursuer, obstacle)
+            info = self._append_collision_constraint(rows, bounds, pursuer, obstacle, adaptive_margin)
             info["name"] = obstacle.name
             barrier_info["collisions"].append(info)
-        barrier_info["input"] = self._append_input_constraint(rows, bounds, pursuer, target)
+        barrier_info["input"] = self._append_input_constraint(rows, bounds, pursuer, target, adaptive_margin)
 
         constraints = [
             LinearSafetyConstraint.make("hocbf_%02d" % idx, row, bound, kind="hocbf")
@@ -373,6 +361,8 @@ class TrustUpController:
             "nominal_accel": nominal,
             "safe_accel": safe_accel,
             "command_velocity": self.command_velocity.copy(),
+            "adaptive": adaptive_info.as_dict(),
+            "adaptive_robustness_margin": adaptive_margin,
             "qp_feasible": result.feasible,
             "qp_active": result.active,
             "qp_active_names": result.active_names(),
@@ -409,9 +399,7 @@ class TargetTrajectory:
         self.reference_scale = float(reference_scale)
         self.angular_rate = float(angular_rate)
         smoothing = smoothing or {}
-        self.smoothing = TrajectorySmoothingParameters(
-            **{k: smoothing[k] for k in TrajectorySmoothingParameters.__dataclass_fields__ if k in smoothing}
-        )
+        self.smoothing = TrajectorySmoothingParameters(**dataclass_subset(TrajectorySmoothingParameters, smoothing))
         self._bspline_optimizer = FastPlannerBsplineOptimizer(
             BsplineOptimizerConfig.from_mapping(self.smoothing.__dict__)
         )
@@ -491,10 +479,8 @@ class TargetTrajectory:
         accels = [np.zeros(3) for _ in states]
         clearance = max(float(params.target_pair_clearance), 0.0)
         activation_margin = max(float(params.target_pair_activation_margin), 1.0e-3)
-        for i in range(len(states)):
-            for j in range(i + 1, len(states)):
-                first = states[i]
-                second = states[j]
+        for i, first in enumerate(states):
+            for j, second in enumerate(states[i + 1 :], start=i + 1):
                 diff = first.position - second.position
                 dist = float(np.linalg.norm(diff))
                 if dist < 1.0e-6:

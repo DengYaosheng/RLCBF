@@ -7,6 +7,7 @@ import numpy as np
 import yaml
 
 from .core import AgentState, PolicyParameters, SafetyParameters, VehicleLimits
+from .utils import dataclass_subset
 
 
 def package_root() -> str:
@@ -46,17 +47,17 @@ def scenario_offset(config: Mapping[str, Any]) -> np.ndarray:
 
 def safety_from_config(config: Mapping[str, Any]) -> SafetyParameters:
     data = config.get("safety", {})
-    return SafetyParameters(**{k: data[k] for k in SafetyParameters.__dataclass_fields__ if k in data})
+    return SafetyParameters(**dataclass_subset(SafetyParameters, data))
 
 
 def limits_from_config(config: Mapping[str, Any]) -> VehicleLimits:
     data = config.get("vehicle_profile", {})
-    return VehicleLimits(**{k: data[k] for k in VehicleLimits.__dataclass_fields__ if k in data})
+    return VehicleLimits(**dataclass_subset(VehicleLimits, data))
 
 
 def policy_from_config(config: Mapping[str, Any]) -> PolicyParameters:
     data = config.get("nominal_policy", {})
-    return PolicyParameters(**{k: data[k] for k in PolicyParameters.__dataclass_fields__ if k in data})
+    return PolicyParameters(**dataclass_subset(PolicyParameters, data))
 
 
 def obstacles_from_config(config: Mapping[str, Any], *, apply_offset: bool = True) -> List[AgentState]:

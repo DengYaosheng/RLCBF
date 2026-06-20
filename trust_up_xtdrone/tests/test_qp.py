@@ -1,11 +1,6 @@
-import os
-import sys
-
 import numpy as np
 
-PKG_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
-sys.path.insert(0, os.path.join(PKG_DIR, "src"))
-
+from trust_up_xtdrone.adaptive import AdaptiveParameters, AdaptiveRobustnessEstimator
 from trust_up_xtdrone.qp import project_to_halfspaces
 from trust_up_xtdrone.core import AgentState, SafetyParameters, TargetTrajectory, TrustUpController, VehicleLimits
 from trust_up_xtdrone.planning import BsplineOptimizerConfig, FastPlannerBsplineOptimizer, UniformCubicBspline
@@ -69,6 +64,46 @@ def test_guard_shell_tightens_without_changing_paper_shell():
     assert np.isclose(safety.sensing_bound(pursuer, target), 2.6)
     assert np.isclose(safety.enforced_collision_bound(pursuer, target), 1.42)
     assert np.isclose(safety.enforced_sensing_bound(pursuer, target), 2.42)
+
+
+def test_adaptive_estimator_adds_margin_under_residual_and_pressure():
+    safety = SafetyParameters(
+        collision_radius=0.5,
+        sensing_radius=1.3,
+        desired_range=0.8,
+        use_object_radius=True,
+        robustness_margin=0.04,
+    )
+    estimator = AdaptiveRobustnessEstimator(
+        AdaptiveParameters(
+            adaptation_gain=1.2,
+            residual_filter_gain=1.0,
+            pressure_margin_gain=0.08,
+            residual_margin_gain=0.10,
+            max_margin=0.5,
+        )
+    )
+    pursuer = AgentState.from_xyz([0.95, 0.0, 0.0], vel=[0.0, 0.0, 0.0], radius=0.2)
+    target = AgentState.from_xyz([0.0, 0.0, 0.0], vel=[0.0, 0.0, 0.0], radius=0.2, name="target")
+    estimator.update(pursuer, target, [], [0.0, 0.0, 0.0], 0.1, safety)
+    pursuer.velocity = np.array([0.3, 0.0, 0.0])
+    estimate = estimator.update(pursuer, target, [], [0.0, 0.0, 0.0], 0.1, safety)
+    assert estimate.residual_norm > 0.0
+    assert estimate.clearance_pressure > 0.0
+    assert estimate.margin_scale > 0.0
+
+
+def test_controller_reports_adaptive_robustness_margin():
+    controller = TrustUpController(
+        SafetyParameters(collision_radius=0.5, sensing_radius=1.4, desired_range=0.8, use_object_radius=True),
+        VehicleLimits(max_speed=3.0, max_vertical_speed=2.0, max_accel=2.0),
+        adaptive=AdaptiveRobustnessEstimator(AdaptiveParameters(pressure_margin_gain=0.08)),
+    )
+    pursuer = AgentState.from_xyz([1.05, 0.0, 0.0], radius=0.25)
+    target = AgentState.from_xyz([0.0, 0.0, 0.0], radius=0.25, name="target")
+    _, diag = controller.step(pursuer, target, [], 0.1)
+    assert diag["adaptive"]["clearance_pressure"] > 0.0
+    assert diag["adaptive_robustness_margin"] > controller.safety.robustness_margin
 
 
 def test_bspline_target_smoothing_limits_integrated_acceleration():

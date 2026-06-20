@@ -8,20 +8,11 @@ controller.
 """
 
 from dataclasses import dataclass, field
-from typing import Iterable, List, Mapping, Sequence, Tuple
+from typing import List, Mapping, Sequence, Tuple
 
 import numpy as np
 
-
-EPS = 1.0e-9
-
-
-def clamp_norm(vec: Iterable[float], limit: float) -> np.ndarray:
-    arr = np.asarray(vec, dtype=float).reshape(-1)
-    norm = float(np.linalg.norm(arr))
-    if limit > 0.0 and norm > limit:
-        return arr * (limit / max(norm, EPS))
-    return arr
+from .utils import EPS, dataclass_subset
 
 
 @dataclass
@@ -41,7 +32,7 @@ class BsplineOptimizerConfig:
 
     @classmethod
     def from_mapping(cls, data: Mapping[str, object]) -> "BsplineOptimizerConfig":
-        return cls(**{k: data[k] for k in cls.__dataclass_fields__ if k in data})
+        return cls(**dataclass_subset(cls, data))
 
 
 @dataclass
